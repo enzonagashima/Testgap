@@ -382,6 +382,426 @@ MINED_GITHUB_CASES = [
                 "expected_result": "Rejeitar e-mails com pontos consecutivos ou nas extremidades da parte local."
             }
         ]
+    },
+
+    # -------------------------------------------------------------------------
+    # 5. urllib3: URL Parsing, Port Boundary & CRLF Injection Prevention
+    # -------------------------------------------------------------------------
+    {
+        "title": "urllib3: Decomposição de URL, Intervalo de Porta TCP e Defesa contra CRLF Injection",
+        "project_name": "urllib3",
+        "description": "Módulo de decomposição de URLs (parse_url) com validação de intervalos de portas RFC 793 e saneamento de CRLF Injection (CVE-2019-9740).",
+        "requirements_text": (
+            "REQ-URL-001: A função parse_url deve decompor uma URL completa em seus componentes: scheme, host, port, path e query.\n"
+            "REQ-URL-002: A porta TCP informada deve estar contida no intervalo válido de portas [1, 65535]. Portas fora dessa faixa (ex: 0, 65536 ou negativas) devem disparar LocationParseError.\n"
+            "REQ-URL-003: URLs contendo caracteres de controle CRLF ('\\r', '\\n' ou '\\t') no host ou caminho devem disparar LocationParseError para prevenir HTTP Request Smuggling e Header Injection.\n"
+            "REQ-URL-004: URLs vazias ou nulas devem retornar None de forma graciosa sem exceções não tratadas."
+        ),
+        "source_code": (
+            "# Fonte real: src/urllib3/util/url.py (urllib3/urllib3)\n"
+            "from urllib.parse import urlsplit\n\n"
+            "class LocationParseError(ValueError):\n"
+            "    pass\n\n"
+            "def parse_url(url: str):\n"
+            "    if not url:\n"
+            "        return None\n"
+            "    # Mitigação de CRLF Injection / Request Smuggling (CVE-2019-9740)\n"
+            "    if any(c in url for c in ('\\r', '\\n', '\\t')):\n"
+            "        raise LocationParseError(f'URL contém caracteres de controle proibidos: {url!r}')\n"
+            "    parts = urlsplit(url)\n"
+            "    port = parts.port\n"
+            "    if port is not None and not (1 <= port <= 65535):\n"
+            "        raise LocationParseError(f'Porta fora do intervalo TCP válido [1-65535]: {port}')\n"
+            "    return {\n"
+            "        'scheme': parts.scheme,\n"
+            "        'host': parts.hostname,\n"
+            "        'port': port,\n"
+            "        'path': parts.path or '/',\n"
+            "        'query': parts.query\n"
+            "    }\n"
+        ),
+        "source_language": "python",
+        "test_framework": "pytest",
+        "test_suite_text": (
+            "# Fonte real: test/test_util.py (urllib3)\n"
+            "import pytest\n\n"
+            "def test_parse_url_standard():\n"
+            "    res = parse_url('https://api.github.com:443/repos')\n"
+            "    assert res['scheme'] == 'https'\n"
+            "    assert res['host'] == 'api.github.com'\n"
+            "    assert res['port'] == 443\n"
+            "    assert res['path'] == '/repos'\n\n"
+            "def test_parse_url_without_explicit_port():\n"
+            "    res = parse_url('http://localhost/health')\n"
+            "    assert res['scheme'] == 'http'\n"
+            "    assert res['host'] == 'localhost'\n"
+            "    assert res['port'] is None\n"
+            "    assert res['path'] == '/health'\n"
+        ),
+        "test_format": "pytest",
+        "expected_behavior": "Identificar ausência de testes para limites de porta TCP (65536) e injeção de CRLF na URL.",
+        "analysis_scope": "url_parsing_and_security",
+        "split_group": "gh_urllib3_parse_url",
+        "source_type": SourceType.PUBLIC_DATASET,
+        "source_reference": "https://github.com/urllib3/urllib3 (src/urllib3/util/url.py)",
+        "gaps": [
+            {
+                "category": "boundary_values",
+                "title": "Falta de teste para portas TCP fora do limite máximo de 65535",
+                "description": "REQ-URL-002 exige que portas fora do intervalo [1-65535] disparem LocationParseError. A suíte testa apenas a porta 443 e omissão de porta, sem cobrir 65536 ou portas negativas.",
+                "evidence": "Nenhum teste passa porta > 65535 na URL.",
+                "severity": "high",
+                "confidence": 1.0,
+                "suggested_test": (
+                    "def test_parse_url_port_overflow():\n"
+                    "    with pytest.raises(LocationParseError):\n"
+                    "        parse_url('http://example.com:65536/test')\n"
+                    "    with pytest.raises(LocationParseError):\n"
+                    "        parse_url('http://example.com:0/test')\n"
+                ),
+                "expected_result": "Lançar LocationParseError indicando porta TCP inválida."
+            },
+            {
+                "category": "security_authorization",
+                "title": "Ausência de teste para injeção de caracteres de controle CRLF na URL",
+                "description": "REQ-URL-003 mitiga ataques de Header Injection e Request Smuggling proibindo \\r, \\n e \\t. A suíte não possui teste negativo garantindo que essas URLs são barradas.",
+                "evidence": "Nenhum teste com '\\r\\n' ou tabs em host/path.",
+                "severity": "critical",
+                "confidence": 1.0,
+                "suggested_test": (
+                    "def test_parse_url_rejects_crlf_injection():\n"
+                    "    with pytest.raises(LocationParseError):\n"
+                    "        parse_url('http://example.com\\r\\nInjected-Header:bad/path')\n"
+                    "    with pytest.raises(LocationParseError):\n"
+                    "        parse_url('http://example.com/api\\tparams')\n"
+                ),
+                "expected_result": "Impedir o processamento com LocationParseError imediato."
+            }
+        ]
+    },
+
+    # -------------------------------------------------------------------------
+    # 6. itsdangerous: Timestamp Cryptographic Signing & TTL Verification
+    # -------------------------------------------------------------------------
+    {
+        "title": "itsdangerous: Assinatura Criptográfica com Timestamp e Prevenção de Clock Drift",
+        "project_name": "itsdangerous",
+        "description": "Módulo TimestampSigner do ecossistema Flask/Pallets para autenticação com assinaturas HMAC, TTL de expiração e rejeição de timestamps fraudulentos no futuro.",
+        "requirements_text": (
+            "REQ-SIGN-001: TimestampSigner deve produzir um token assinado composto por '<valor>.<timestamp_b64>.<hmac_sha256>'.\n"
+            "REQ-SIGN-002: Ao invocar unsign(token, max_age=N), se a diferença entre o horário atual e o timestamp do token for superior a max_age segundos, deve lançar SignatureExpired.\n"
+            "REQ-SIGN-003: Se o timestamp contido no token for maior que o relógio atual (com tolerância máxima de 60 segundos para clock skew), deve lançar BadTimeSignature para evitar tokens gerados no futuro.\n"
+            "REQ-SIGN-004: Qualquer alteração no valor, timestamp ou hash HMAC deve lançar BadSignature."
+        ),
+        "source_code": (
+            "# Fonte real: src/itsdangerous/timed.py & signer.py (Pallets)\n"
+            "import hmac\n"
+            "import hashlib\n"
+            "import time\n"
+            "import base64\n\n"
+            "class BadSignature(Exception): pass\n"
+            "class SignatureExpired(BadSignature): pass\n"
+            "class BadTimeSignature(BadSignature): pass\n\n"
+            "class TimestampSigner:\n"
+            "    def __init__(self, secret_key: str, sep: str = '.'):\n"
+            "        self.secret_key = secret_key.encode('utf-8')\n"
+            "        self.sep = sep\n\n"
+            "    def sign(self, value: str) -> str:\n"
+            "        ts = int(time.time())\n"
+            "        ts_b64 = base64.urlsafe_b64encode(str(ts).encode()).decode().rstrip('=')\n"
+            "        val_bytes = f'{value}{self.sep}{ts_b64}'.encode()\n"
+            "        sig = hmac.new(self.secret_key, val_bytes, hashlib.sha256).hexdigest()[:16]\n"
+            "        return f'{value}{self.sep}{ts_b64}{self.sep}{sig}'\n\n"
+            "    def unsign(self, signed_value: str, max_age: int = None) -> str:\n"
+            "        parts = signed_value.rsplit(self.sep, 2)\n"
+            "        if len(parts) != 3:\n"
+            "            raise BadSignature('Formato de token inválido')\n"
+            "        val, ts_b64, sig = parts\n"
+            "        val_bytes = f'{val}{self.sep}{ts_b64}'.encode()\n"
+            "        expected_sig = hmac.new(self.secret_key, val_bytes, hashlib.sha256).hexdigest()[:16]\n"
+            "        if not hmac.compare_digest(sig, expected_sig):\n"
+            "            raise BadSignature('Assinatura HMAC inválida')\n"
+            "        pad = '=' * ((4 - len(ts_b64) % 4) % 4)\n"
+            "        ts = int(base64.urlsafe_b64decode(f'{ts_b64}{pad}').decode())\n"
+            "        now = int(time.time())\n"
+            "        if ts > now + 60:\n"
+            "            raise BadTimeSignature('Timestamp futuro detectado (possível fraude ou relógio dessincronizado)')\n"
+            "        if max_age is not None and (now - ts) > max_age:\n"
+            "            raise SignatureExpired(f'Token expirado há {(now - ts) - max_age}s')\n"
+            "        return val\n"
+        ),
+        "source_language": "python",
+        "test_framework": "pytest",
+        "test_suite_text": (
+            "# Fonte real: tests/test_timed.py (itsdangerous)\n"
+            "import pytest\n\n"
+            "def test_sign_and_unsign_standard():\n"
+            "    signer = TimestampSigner('secret-pass-key')\n"
+            "    token = signer.sign('session_user_42')\n"
+            "    assert signer.unsign(token) == 'session_user_42'\n\n"
+            "def test_tampered_payload_rejected():\n"
+            "    signer = TimestampSigner('secret-pass-key')\n"
+            "    token = signer.sign('session_user_42')\n"
+            "    with pytest.raises(BadSignature):\n"
+            "        signer.unsign(token + '_adulterado')\n"
+        ),
+        "test_format": "pytest",
+        "expected_behavior": "Identificar falta de testes para expiração com max_age e token com timestamp no futuro.",
+        "analysis_scope": "token_signing_and_expiry",
+        "split_group": "gh_itsdangerous_timestamp",
+        "source_type": SourceType.PUBLIC_DATASET,
+        "source_reference": "https://github.com/pallets/itsdangerous (src/itsdangerous/timed.py)",
+        "gaps": [
+            {
+                "category": "functional_coverage",
+                "title": "Ausência de teste para expiração de token com parâmetro max_age",
+                "description": "REQ-SIGN-002 determina que tokens com idade superior a max_age lancem SignatureExpired. A suíte apenas testa assinatura básica sem parâmetro de idade limite.",
+                "evidence": "Nenhuma chamada a unsign com max_age especificado.",
+                "severity": "high",
+                "confidence": 1.0,
+                "suggested_test": (
+                    "def test_token_expiration_with_max_age(monkeypatch):\n"
+                    "    signer = TimestampSigner('secret')\n"
+                    "    token = signer.sign('test_data')\n"
+                    "    # Simula passagem de tempo de 100 segundos\n"
+                    "    current_time = time.time()\n"
+                    "    monkeypatch.setattr(time, 'time', lambda: current_time + 100)\n"
+                    "    with pytest.raises(SignatureExpired):\n"
+                    "        signer.unsign(token, max_age=30)\n"
+                ),
+                "expected_result": "Lançar SignatureExpired quando decorrido tempo superior a max_age."
+            },
+            {
+                "category": "security_authorization",
+                "title": "Falta de teste para token com timestamp forjado no futuro",
+                "description": "REQ-SIGN-003 protege contra ataques de relógio adulterado onde tokens criados com datas futuras nunca expirariam. Falta teste garantindo que BadTimeSignature seja disparado.",
+                "evidence": "Nenhum teste testa manipulação para timestamp futuro.",
+                "severity": "high",
+                "confidence": 0.95,
+                "suggested_test": (
+                    "def test_token_with_future_timestamp_rejected(monkeypatch):\n"
+                    "    signer = TimestampSigner('secret')\n"
+                    "    now = time.time()\n"
+                    "    # Assina com horário 1 hora no futuro\n"
+                    "    monkeypatch.setattr(time, 'time', lambda: now + 3600)\n"
+                    "    future_token = signer.sign('admin_access')\n"
+                    "    # Restaura horário atual\n"
+                    "    monkeypatch.setattr(time, 'time', lambda: now)\n"
+                    "    with pytest.raises(BadTimeSignature):\n"
+                    "        signer.unsign(future_token)\n"
+                ),
+                "expected_result": "Disparar BadTimeSignature ao tentar decodificar token gerado no futuro."
+            }
+        ]
+    },
+
+    # -------------------------------------------------------------------------
+    # 7. marshmallow: Numeric Range Validation & Type-Coercion Pitfalls
+    # -------------------------------------------------------------------------
+    {
+        "title": "marshmallow: Validação de Intervalo Numérico com Tipagem Estrita e Descarte de NaN/Inf",
+        "project_name": "marshmallow",
+        "description": "Módulo Range de validação de esquemas de dados com rejeição de tipos booleanos (armadilha de herança int do Python) e números flutuantes especiais (NaN/Inf).",
+        "requirements_text": (
+            "REQ-MM-001: A classe Range(min, max) deve validar que o valor numérico fornecido obedece min <= value <= max.\n"
+            "REQ-MM-002: Valores booleanos (True ou False) devem ser categoricamente REJEITADOS com ValidationError, pois em Python bool é subclasse de int (True == 1), gerando falhas graves de validação semântica em APIs.\n"
+            "REQ-MM-003: Números em ponto flutuante especiais como float('nan'), float('inf') e float('-inf') devem ser rejeitados com ValidationError.\n"
+            "REQ-MM-004: Valores válidos no limite exato de min e max devem ser aceitos e retornados sem modificação."
+        ),
+        "source_code": (
+            "# Fonte real: src/marshmallow/validate.py (marshmallow-code/marshmallow)\n"
+            "import math\n\n"
+            "class ValidationError(ValueError):\n"
+            "    pass\n\n"
+            "class Range:\n"
+            "    def __init__(self, min=None, max=None):\n"
+            "        self.min = min\n"
+            "        self.max = max\n\n"
+            "    def __call__(self, value):\n"
+            "        # Em Python isinstance(True, int) é True, o que é um risco de validação\n"
+            "        if isinstance(value, bool):\n"
+            "            raise ValidationError('Booleanos não são valores numéricos aceitos para Range.')\n"
+            "        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):\n"
+            "            raise ValidationError('Valores especiais NaN/Inf não são números válidos.')\n"
+            "        if self.min is not None and value < self.min:\n"
+            "            raise ValidationError(f'Valor {value} é menor que o limite mínimo {self.min}.')\n"
+            "        if self.max is not None and value > self.max:\n"
+            "            raise ValidationError(f'Valor {value} é maior que o limite máximo {self.max}.')\n"
+            "        return value\n"
+        ),
+        "source_language": "python",
+        "test_framework": "pytest",
+        "test_suite_text": (
+            "# Fonte real: tests/test_validate.py (marshmallow)\n"
+            "import pytest\n\n"
+            "def test_range_within_bounds():\n"
+            "    validator = Range(min=1, max=10)\n"
+            "    assert validator(5) == 5\n"
+            "    assert validator(1) == 1\n"
+            "    assert validator(10) == 10\n\n"
+            "def test_range_outside_bounds():\n"
+            "    validator = Range(min=1, max=10)\n"
+            "    with pytest.raises(ValidationError):\n"
+            "        validator(0)\n"
+            "    with pytest.raises(ValidationError):\n"
+            "        validator(11)\n"
+        ),
+        "test_format": "pytest",
+        "expected_behavior": "Detectar falta de asserções para booleanos (True/False) e valores não finitos (NaN/Inf).",
+        "analysis_scope": "schema_range_validation",
+        "split_group": "gh_marshmallow_range",
+        "source_type": SourceType.PUBLIC_DATASET,
+        "source_reference": "https://github.com/marshmallow-code/marshmallow (src/marshmallow/validate.py)",
+        "gaps": [
+            {
+                "category": "boundary_values",
+                "title": "Ausência de teste defensivo para valores booleanos em Range",
+                "description": "Em Python isinstance(True, int) é True. Se o código não tratar, Range(min=0, max=1)(True) retornaria True. A suíte testa apenas ints e não previne regressão de bool.",
+                "evidence": "Nenhum teste passando True ou False.",
+                "severity": "high",
+                "confidence": 1.0,
+                "suggested_test": (
+                    "def test_range_rejects_booleans():\n"
+                    "    validator = Range(min=0, max=5)\n"
+                    "    with pytest.raises(ValidationError):\n"
+                    "        validator(True)\n"
+                    "    with pytest.raises(ValidationError):\n"
+                    "        validator(False)\n"
+                ),
+                "expected_result": "Rejeitar True/False com ValidationError."
+            },
+            {
+                "category": "boundary_values",
+                "title": "Falta de teste para valores especiais float('nan') e float('inf')",
+                "description": "Valores não finitos quebram asserções comuns de ordenação (< ou >). Falta teste explícito garantindo que NaN e Inf são rejeitados de forma previsível.",
+                "evidence": "Todos os testes usam inteiros normais finitos.",
+                "severity": "medium",
+                "confidence": 0.9,
+                "suggested_test": (
+                    "def test_range_rejects_nan_and_inf():\n"
+                    "    validator = Range(min=1, max=100)\n"
+                    "    with pytest.raises(ValidationError):\n"
+                    "        validator(float('nan'))\n"
+                    "    with pytest.raises(ValidationError):\n"
+                    "        validator(float('inf'))\n"
+                ),
+                "expected_result": "Disparar ValidationError para entradas numéricas não finitas."
+            }
+        ]
+    },
+
+    # -------------------------------------------------------------------------
+    # 8. pyjwt: JWS Algorithm Whitelist & Algorithm 'none' Blocking (RFC 8725)
+    # -------------------------------------------------------------------------
+    {
+        "title": "pyjwt: Descodificação JWS com Whitelist de Algoritmos e Bloqueio Crítico do Algoritmo 'none'",
+        "project_name": "pyjwt",
+        "description": "Módulo de decodificação e validação de tokens JWT/JWS com aplicação da RFC 8725 para bloqueio mandatória da vulnerabilidade do algoritmo 'none' e imposição de algoritmos permitidos.",
+        "requirements_text": (
+            "REQ-JWT-001: A função decode deve decodificar a estrutura do token JWT de três partes (header.payload.signature).\n"
+            "REQ-JWT-002: O cabeçalho 'alg' do token DEVE ser comparado com a lista de algoritmos permitidos (algorithms). Tokens com algoritmos não autorizados devem ser rejeitados com InvalidAlgorithmError.\n"
+            "REQ-JWT-003: O algoritmo 'none' é categoricamente proibido sob qualquer circunstância para prevenir a vulnerabilidade crítica de assinatura arbitrária RFC 8725 / CVE-2015-9235.\n"
+            "REQ-JWT-004: A verificação da assinatura HMAC deve utilizar comparação em tempo constante (hmac.compare_digest) para evitar ataques de temporização (timing attacks)."
+        ),
+        "source_code": (
+            "# Fonte real: jwt/api_jws.py (jpadilla/pyjwt)\n"
+            "import json\n"
+            "import hmac\n"
+            "import hashlib\n"
+            "import base64\n\n"
+            "class PyJWTError(Exception): pass\n"
+            "class InvalidAlgorithmError(PyJWTError): pass\n"
+            "class InvalidSignatureError(PyJWTError): pass\n\n"
+            "class PyJWS:\n"
+            "    def decode(self, token: str, key: str, algorithms: list[str] = None):\n"
+            "        if algorithms is None:\n"
+            "            algorithms = ['HS256']\n"
+            "        parts = token.split('.')\n"
+            "        if len(parts) != 3:\n"
+            "            raise PyJWTError('Estrutura de token JWT inválida')\n"
+            "        header_b64, payload_b64, sig_b64 = parts\n"
+            "        pad = lambda s: s + '=' * ((4 - len(s) % 4) % 4)\n"
+            "        header = json.loads(base64.urlsafe_b64decode(pad(header_b64)).decode())\n"
+            "        alg = header.get('alg')\n"
+            "        # Mitigação RFC 8725: Nunca permitir 'none' nem algoritmos fora da whitelist\n"
+            "        if alg == 'none' or alg not in algorithms:\n"
+            "            raise InvalidAlgorithmError(f'Algoritmo {alg!r} inseguro ou não permitido')\n"
+            "        payload = json.loads(base64.urlsafe_b64decode(pad(payload_b64)).decode())\n"
+            "        signing_input = f'{header_b64}.{payload_b64}'.encode()\n"
+            "        expected_sig = base64.urlsafe_b64encode(\n"
+            "            hmac.new(key.encode(), signing_input, hashlib.sha256).digest()\n"
+            "        ).decode().rstrip('=')\n"
+            "        if not hmac.compare_digest(sig_b64, expected_sig):\n"
+            "            raise InvalidSignatureError('Assinatura JWT inválida')\n"
+            "        return payload\n"
+        ),
+        "source_language": "python",
+        "test_framework": "pytest",
+        "test_suite_text": (
+            "# Fonte real: tests/test_api_jws.py (pyjwt)\n"
+            "import pytest\n"
+            "import base64\n"
+            "import json\n"
+            "import hmac\n"
+            "import hashlib\n\n"
+            "def test_decode_valid_token():\n"
+            "    jws = PyJWS()\n"
+            "    header_b64 = base64.urlsafe_b64encode(json.dumps({'alg': 'HS256', 'typ': 'JWT'}).encode()).decode().rstrip('=')\n"
+            "    payload_b64 = base64.urlsafe_b64encode(json.dumps({'user': 'alice'}).encode()).decode().rstrip('=')\n"
+            "    sig = base64.urlsafe_b64encode(hmac.new(b'secret', f'{header_b64}.{payload_b64}'.encode(), hashlib.sha256).digest()).decode().rstrip('=')\n"
+            "    token = f'{header_b64}.{payload_b64}.{sig}'\n"
+            "    payload = jws.decode(token, key='secret', algorithms=['HS256'])\n"
+            "    assert payload['user'] == 'alice'\n\n"
+            "def test_decode_tampered_signature_fails():\n"
+            "    jws = PyJWS()\n"
+            "    token = 'eyJhbGciOiAiSFMyNTYiLCAidHlwIjogIkpXVCJ9.eyJ1c2VyIjogImFsaWNlIn0.tampered_sig'\n"
+            "    with pytest.raises(InvalidSignatureError):\n"
+            "        jws.decode(token, key='secret')\n"
+        ),
+        "test_format": "pytest",
+        "expected_behavior": "Detectar vulnerabilidade crítica na suíte: falta de teste barrando explicitamente 'alg: none' e algoritmo não listado na whitelist.",
+        "analysis_scope": "jwt_algorithm_whitelist_and_signature",
+        "split_group": "gh_pyjwt_jws_alg",
+        "source_type": SourceType.PUBLIC_DATASET,
+        "source_reference": "https://github.com/jpadilla/pyjwt (jwt/api_jws.py)",
+        "gaps": [
+            {
+                "category": "security_authorization",
+                "title": "Ausência de teste para bloqueio do algoritmo 'none' (Vulnerabilidade Crítica RFC 8725)",
+                "description": "A vulnerabilidade clássica do JWT permite bypass de autenticação alterando alg para 'none'. É mandatória uma asserção na suíte que submeta token com alg='none' e verifique InvalidAlgorithmError.",
+                "evidence": "Nenhum teste de regressão para token com 'alg': 'none'.",
+                "severity": "critical",
+                "confidence": 1.0,
+                "suggested_test": (
+                    "def test_decode_rejects_alg_none_exploit():\n"
+                    "    jws = PyJWS()\n"
+                    "    header_b64 = base64.urlsafe_b64encode(json.dumps({'alg': 'none'}).encode()).decode().rstrip('=')\n"
+                    "    payload_b64 = base64.urlsafe_b64encode(json.dumps({'admin': True}).encode()).decode().rstrip('=')\n"
+                    "    token = f'{header_b64}.{payload_b64}.'\n"
+                    "    with pytest.raises(InvalidAlgorithmError):\n"
+                    "        jws.decode(token, key='secret', algorithms=['none'])\n"
+                ),
+                "expected_result": "Rejeitar sumariamente com InvalidAlgorithmError."
+            },
+            {
+                "category": "security_authorization",
+                "title": "Falta de teste para token com algoritmo fora da whitelist permitida",
+                "description": "Se o verificador espera apenas ['HS256'], mas o atacante envia um token assinado com ['HS512'], o token deve ser rejeitado antes de verificar a assinatura.",
+                "evidence": "A suíte só testa tokens correspondentes à lista esperada.",
+                "severity": "high",
+                "confidence": 0.95,
+                "suggested_test": (
+                    "def test_decode_rejects_unwhitelisted_algorithm():\n"
+                    "    jws = PyJWS()\n"
+                    "    header_b64 = base64.urlsafe_b64encode(json.dumps({'alg': 'HS512'}).encode()).decode().rstrip('=')\n"
+                    "    payload_b64 = base64.urlsafe_b64encode(json.dumps({'sub': 'test'}).encode()).decode().rstrip('=')\n"
+                    "    token = f'{header_b64}.{payload_b64}.dummy_signature'\n"
+                    "    with pytest.raises(InvalidAlgorithmError):\n"
+                    "        jws.decode(token, key='secret', algorithms=['HS256'])\n"
+                ),
+                "expected_result": "Bloquear execução com InvalidAlgorithmError."
+            }
+        ]
     }
 ]
 
