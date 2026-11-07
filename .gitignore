@@ -59,6 +59,8 @@ data/backups/*
 data/exports/*
 !data/exports/.gitkeep
 
+data/cloned_repos/
+
 data/examples/*
 !data/examples/.gitkeep
 
@@ -101,6 +103,7 @@ htmlcov/
 # ------------------------------------------
 .idea/
 .vscode/
+.workspace_anchor
 *.swp
 *.swo
 *.sublime-workspace

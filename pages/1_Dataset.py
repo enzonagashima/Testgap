@@ -106,7 +106,7 @@ else:
     st.divider()
 
     # Detail & Action Inspector
-    st.subheader("🔍 Inspeção e Curadoria de Exemplo")
+    st.subheader("Inspeção e Curadoria de Exemplo")
     selected_public_id = st.selectbox(
         "Selecione um exemplo para inspecionar, revisar ou duplicar:",
         options=[ex.public_id for ex in examples],
