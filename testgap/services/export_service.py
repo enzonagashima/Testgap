@@ -12,6 +12,7 @@ from testgap.schemas import (
 )
 from testgap.enums import ReviewStatus, GapStatus
 from testgap.utils.jsonl import write_jsonl
+from testgap.utils.ai_formatting import to_chatml_record, to_alpaca_record
 
 
 class ExportService:
@@ -175,10 +176,24 @@ class ExportService:
 
         results = {}
         for split_name, recs in splits.items():
+            # 1. Salva formato canônico do TestGap (validado contra dataset-v1.schema.json)
             file_path = out_dir / f"{split_name}.jsonl"
             write_jsonl(file_path, recs)
+
+            # 2. Salva formato ChatML para treinamento nativo com SFTTrainer / Hugging Face
+            chatml_recs = [to_chatml_record(r, include_thought=True) for r in recs]
+            chatml_file = out_dir / f"{split_name}_chatml.jsonl"
+            write_jsonl(chatml_file, chatml_recs)
+
+            # 3. Salva formato Alpaca para runners clássicos de instrução
+            alpaca_recs = [to_alpaca_record(r, include_thought=True) for r in recs]
+            alpaca_file = out_dir / f"{split_name}_alpaca.jsonl"
+            write_jsonl(alpaca_file, alpaca_recs)
+
             results[split_name] = {
                 "file": str(file_path),
+                "chatml_file": str(chatml_file),
+                "alpaca_file": str(alpaca_file),
                 "count": len(recs),
                 "groups": list(train_groups if split_name == "train" else (val_groups if split_name == "val" else test_groups))
             }
